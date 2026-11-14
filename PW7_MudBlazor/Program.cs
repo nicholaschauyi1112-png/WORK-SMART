@@ -1,11 +1,14 @@
-using Work_smart.Components;
+using MudBlazor.Services;
+using PW7_MudBlazor.Components;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
-
+builder.Services.AddMudServices();
+builder.Services.AddHostedService<PW7_MudBlazor.Services.MqttBackgroundService>();
+builder.Services.AddSingleton<PW7_MudBlazor.Services.MqttDataStore>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

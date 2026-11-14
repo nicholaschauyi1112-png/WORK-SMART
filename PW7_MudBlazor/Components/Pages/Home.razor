@@ -1,0 +1,11 @@
+@page "/"
+@inject NavigationManager Navigation
+
+<PageTitle>Smart Automatic Entrance Door</PageTitle>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Navigation.NavigateTo("/automatic-door", replace: true);
+    }
+}

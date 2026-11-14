@@ -1,0 +1,40 @@
+﻿@page "/dashboard"
+@inject MqttDataStore Store
+@implements IDisposable
+@using PW7_MudBlazor.Services
+
+<MudContainer MaxWidth="MaxWidth.Small" Class="mt-8">
+    <MudCard>
+        <MudCardContent>
+            <MudText Typo="Typo.h5">Beaver IoT - Live Reading</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                Device: @Store.DeviceId
+            </MudText>
+
+            <MudText Typo="Typo.h2" Class="mt-4">
+                @Store.Voltage.ToString("0.0") V
+            </MudText>
+
+            <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2">
+                Last updated: @Store.LastUpdated.ToString("HH:mm:ss")
+            </MudText>
+        </MudCardContent>
+    </MudCard>
+</MudContainer>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Store.OnChange += HandleChange;
+    }
+
+    private void HandleChange()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Store.OnChange -= HandleChange;
+    }
+}

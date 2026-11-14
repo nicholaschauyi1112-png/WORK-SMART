@@ -1,0 +1,189 @@
+@page "/automatic-door"
+@rendermode InteractiveServer
+@using PW7_MudBlazor.Services
+@using MudBlazor
+@inject MqttDataStore Store
+@implements IDisposable
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-5 mb-8">
+  <MudText Typo="Typo.h4">Smart Automatic Entrance Door</MudText>
+  <MudText Color="Color.Secondary" Class="mb-4">Mall Sliding Door · WAGO / Beaver IoT · testkok001</MudText>
+  <MudPaper Class="pa-4 mb-4" Elevation="1">
+    <MudText Typo="Typo.h6">Operating mode</MudText>
+    <MudRadioGroup T="string" @bind-Value="Mode">
+      <MudRadio T="string" Value="@("Simulation")">Simulation (no WAGO required)</MudRadio>
+      <MudRadio T="string" Value="@("Live MQTT")">Live MQTT (read-only)</MudRadio>
+    </MudRadioGroup>
+    @if (Mode == "Live MQTT")
+    {
+      <MudAlert Severity="@(IsLiveFresh ? Severity.Success : Severity.Warning)" Class="mt-2">
+        @(Reading.HasData ? $"Last received: {Reading.LastUpdated:HH:mm:ss} | Device: {Reading.DeviceId}" : "No MQTT message received yet. Check Beaver, WAGO and testkok001 topic.")
+      </MudAlert>
+      <MudText Typo="Typo.caption">MQTT: @Store.MqttStatus</MudText>
+      @if (Reading.HasData && !IsLiveFresh)
+      {
+        <MudAlert Severity="Severity.Warning" Class="mt-2">Last data is over 15 seconds old. The PLC or broker may have stopped updating.</MudAlert>
+      }
+    }
+  </MudPaper>
+
+  <MudGrid Spacing="3">
+    <MudItem xs="12" md="8">
+      <MudPaper Class="pa-5" Elevation="2">
+        <div class="door-heading"><strong>AUTOMATIC SLIDING DOOR</strong><span class="door-status @(ActiveDoor ? "opened" : "closed")">@(ActiveDoor ? "OPEN" : "CLOSED")</span></div>
+        <div class="door-scene">
+          <div class="door-top">SMART MALL ENTRANCE</div>
+          <div class="door-aperture">
+            <div class="door-panel left @(ActiveDoor ? "slide-left" : "")"><span>◀</span></div>
+            <div class="door-panel right @(ActiveDoor ? "slide-right" : "")"><span>▶</span></div>
+            <div class="person">🚶</div>
+          </div>
+          <div class="door-sensor @(ActiveSensor ? "active" : "")">● @(ActiveSensor ? "DETECTED" : "NO DETECTION")</div>
+        </div>
+        <MudText Typo="Typo.body1" Class="mt-4">@StatusText</MudText>
+        @if (Mode == "Simulation" && !ManualMode && !SensorDetect && DoorOpen)
+        {
+          <MudProgressLinear Value="@RemainingPercent" Color="Color.Warning" Class="mt-3" />
+          <MudText Typo="Typo.caption">Automatic closing in @RemainingSeconds.ToString("0.0") seconds</MudText>
+        }
+      </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12" md="4">
+      <MudPaper Class="pa-4 mb-3" Elevation="2">
+        <MudText Typo="Typo.h6">Proximity Sensor</MudText>
+        <MudText Typo="Typo.caption">%IX0.1 · People/object detection</MudText>
+        @if (Mode == "Simulation")
+        {
+          <MudSwitch T="bool" @bind-Value="SensorDetect" Color="Color.Success" Label="@(SensorDetect ? "Detect (1)" : "No detect (0)")" Class="mt-3" />
+        }
+        else { <MudText Class="mt-3">@(ActiveSensor ? "DETECTED (1)" : "NO DETECT (0)")</MudText> }
+      </MudPaper>
+      <MudPaper Class="pa-4 mb-3" Elevation="2">
+        <MudText Typo="Typo.h6">Push Button</MudText>
+        <MudText Typo="Typo.caption">%IX0.0 · Direct open / close</MudText>
+        @if (Mode == "Simulation")
+        {
+          <MudSwitch T="bool" @bind-Value="ManualMode" Color="Color.Primary" Label="Manual override mode" Class="mt-2" />
+          <MudSwitch T="bool" @bind-Value="PushButton" Disabled="@(!ManualMode)" Color="Color.Success" Label="@(PushButton ? "ON · OPEN" : "OFF · CLOSE")" />
+        }
+        else
+        {
+          <MudText Class="mt-3">@(Reading.Button ? "ON (1)" : "OFF (0)")</MudText>
+          <MudText Typo="Typo.caption">PLC manual mode: @(Reading.HasManualMode ? (Reading.ManualMode ? "ON" : "OFF") : "Not published (unknown)")</MudText>
+        }
+        <MudText Typo="Typo.caption">Live mode only reads WAGO states. Switching a website control does not modify %IX0.0.</MudText>
+      </MudPaper>
+      <MudPaper Class="pa-4" Elevation="2">
+        <MudText Typo="Typo.h6">Automatic Door Fan</MudText>
+        <MudText Typo="Typo.caption">Signal Generator %IW5 · 1–10 V</MudText>
+        <div class="fan" style="animation-duration: @(ActiveVoltage <= 0 ? "0s" : (2.2 / Math.Max(ActiveVoltage, 1)).ToString(System.Globalization.CultureInfo.InvariantCulture) + "s"); animation-play-state: @(ActiveVoltage <= 0 ? "paused" : "running")">✣</div>
+        @if (Mode == "Simulation")
+        {
+          <MudSlider T="double" @bind-Value="FanVoltage" Min="0" Max="10" Step="1" Color="Color.Info" />
+        }
+        <MudText Align="Align.Center">@ActiveVoltage.ToString("0.0") V · @(ActiveVoltage <= 0 ? "FAN OFF" : $"Fan speed {Math.Clamp(ActiveVoltage * 10, 0, 100):0}% (demo)")</MudText>
+        <MudText Typo="Typo.caption">Fan speed is a visual estimate, not a measured RPM.</MudText>
+      </MudPaper>
+    </MudItem>
+  </MudGrid>
+
+  <MudPaper Class="pa-4 mt-4" Elevation="1">
+    <MudText Typo="Typo.h6">PLC Inputs and Outputs</MudText>
+    <MudSimpleTable Dense="true" Hover="true">
+      <thead><tr><th>Signal</th><th>Address</th><th>Current value</th></tr></thead>
+      <tbody>
+        <tr><td>Proximity sensor</td><td>%IX0.1</td><td>@(ActiveSensor ? "1" : "0")</td></tr>
+        <tr><td>Push button</td><td>%IX0.0</td><td>@(ActiveButton ? "1" : "0")</td></tr>
+        <tr><td>Door fan voltage</td><td>%IW5</td><td>@ActiveVoltage.ToString("0.0") V</td></tr>
+        <tr><td>Sliding door</td><td>Virtual output</td><td>@(ActiveDoor ? "OPEN" : "CLOSED")</td></tr>
+        @if (Mode == "Live MQTT")
+        {
+          <tr><td>PLC manual mode</td><td>Internal variable</td><td>@(Reading.HasManualMode ? (Reading.ManualMode ? "ON" : "OFF") : "NOT PUBLISHED")</td></tr>
+        }
+      </tbody>
+    </MudSimpleTable>
+    @if (Mode == "Live MQTT")
+    {
+      <MudText Typo="Typo.h6" Class="mt-4">Live WAGO Diagnostics</MudText>
+      <MudText>Message age: @(Reading.HasData ? (DateTime.Now - Reading.LastUpdated).TotalSeconds.ToString("0") + " seconds" : "No data")</MudText>
+      <MudText>Reported voltage: @Reading.Voltage.ToString("0.00") V</MudText>
+      @if (Reading.Voltage > 10.0 || Reading.Voltage < 0.0)
+      {
+        <MudAlert Severity="Severity.Warning" Class="mt-2">PLC voltage is outside 0–10 V; fan animation is capped at 10 V. Verify %IW5 scaling in CODESYS.</MudAlert>
+      }
+      <MudText Typo="Typo.subtitle2" Class="mt-3">Last received MQTT JSON</MudText>
+      <MudPaper Class="pa-3 mt-1" Style="white-space:pre-wrap;overflow-wrap:anywhere;font-family:monospace;font-size:0.85rem;background:#f3f6fa;">@Store.RawPayload</MudPaper>
+    }
+  </MudPaper>
+</MudContainer>
+
+<style>
+  .door-heading{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-bottom:1rem}
+  .door-status{padding:5px 15px;border-radius:20px;font-weight:700;color:white}
+  .door-status.opened{background:#1e9d62}.door-status.closed{background:#b54949}
+  .door-scene{height:300px;border-radius:16px;background:linear-gradient(#d7eafa,#f5f9fb);position:relative;overflow:hidden;padding:28px 13%}
+  .door-top{text-align:center;letter-spacing:2px;font-size:12px;font-weight:800;color:#294b64;margin-bottom:12px}
+  .door-aperture{height:208px;background:linear-gradient(#a9c0d0,#eaf4f8);border:8px solid #596c7f;position:relative;overflow:hidden;box-shadow:0 5px 12px #0002}
+  .door-panel{position:absolute;top:0;bottom:0;width:50%;background:linear-gradient(110deg,#88b8cd99,#d2e5efdd);border:2px solid #65889b;transition:transform .8s ease;z-index:2;display:flex;align-items:center;justify-content:center;color:#456274}
+  .door-panel.left{left:0}.door-panel.right{right:0}
+  .door-panel.left.slide-left{transform:translateX(-100%)}.door-panel.right.slide-right{transform:translateX(100%)}
+  .person{position:absolute;left:43%;top:40px;font-size:76px;z-index:1}
+  .door-sensor{position:absolute;top:67px;left:50%;transform:translateX(-50%);background:#8b98a7;border-radius:12px;padding:3px 12px;color:white;font-size:11px;font-weight:bold;z-index:4}
+  .door-sensor.active{background:#20a168}
+  .fan{margin:8px auto;width:85px;height:85px;text-align:center;font-size:74px;line-height:85px;color:#268ab9;animation:fan-spin linear infinite}
+  @@keyframes fan-spin{to{transform:rotate(360deg)}}
+</style>
+
+@code {
+    private string Mode = "Simulation";
+    private bool SensorDetect;
+    private bool PushButton;
+    private bool ManualMode;
+    private bool DoorOpen;
+    private double FanVoltage = 1;
+    private DateTimeOffset? SensorLostAt;
+    private readonly CancellationTokenSource stop = new();
+    private DoorReading Reading => Store.Current;
+    private bool IsLiveFresh => Reading.HasData && (DateTime.Now - Reading.LastUpdated).TotalSeconds < 15;
+    private bool ActiveDoor => Mode == "Simulation" ? DoorOpen : Reading.DoorOpen;
+    private bool ActiveSensor => Mode == "Simulation" ? SensorDetect : Reading.Sensor;
+    private bool ActiveButton => Mode == "Simulation" ? PushButton : Reading.Button;
+    private double ActiveVoltage => Mode == "Simulation" ? FanVoltage : Math.Clamp(Reading.Voltage, 0, 10);
+    private double RemainingSeconds => SensorLostAt is null ? 0 : Math.Clamp(5 - (DateTimeOffset.UtcNow - SensorLostAt.Value).TotalSeconds, 0, 5);
+    private double RemainingPercent => RemainingSeconds / 5 * 100;
+    private string StatusText => Mode == "Live MQTT"
+        ? Reading.HasData ? (Reading.DoorOpen ? "LIVE: PLC reports DOOR OPEN" : "LIVE: PLC reports DOOR CLOSED") : "LIVE: Waiting for Beaver MQTT message"
+        : ManualMode ? (DoorOpen ? "MANUAL: Button ON — Door OPEN" : "MANUAL: Button OFF — Door CLOSED")
+        : SensorDetect ? "AUTO: Person detected — door OPEN" : DoorOpen ? "AUTO: Sensor cleared — waiting 5 seconds" : "AUTO: No detection — door CLOSED";
+
+    protected override void OnInitialized()
+    {
+        Store.OnChange += OnStoreChange;
+        _ = RunSimulationAsync();
+    }
+    private void OnStoreChange() => _ = InvokeAsync(StateHasChanged);
+    private async Task RunSimulationAsync()
+    {
+        try
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                await InvokeAsync(() =>
+                {
+                    if (ManualMode) { DoorOpen = PushButton; SensorLostAt = null; }
+                    else if (SensorDetect) { DoorOpen = true; SensorLostAt = null; }
+                    else if (DoorOpen)
+                    {
+                        SensorLostAt ??= DateTimeOffset.UtcNow;
+                        if (RemainingSeconds <= 0) { DoorOpen = false; SensorLostAt = null; }
+                    }
+                    StateHasChanged();
+                });
+                await Task.Delay(100, stop.Token);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+    public void Dispose() { Store.OnChange -= OnStoreChange; stop.Cancel(); }
+}
